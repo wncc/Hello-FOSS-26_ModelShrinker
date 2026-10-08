@@ -29,7 +29,7 @@ A **method** is one way of making a model smaller, for example removing the leas
 ## Install
 
 ```bash
-pip install git+https://github.com/bandiarham07-bot/Model-Shrinker
+pip install git+https://github.com/wncc/Hello-FOSS-26_ModelShrinker
 ```
 
 ## Example
