@@ -53,14 +53,17 @@ def _quantized_engine(backend: str) -> Iterator[None]:
 
 def _freeze_qat_statistics(module: nn.Module) -> None:
     """Stop observer and fused-BatchNorm updates once ranges have stabilized."""
-    from torch.ao.quantization import disable_observer
+    try:
+        from torch.ao.quantization import disable_observer
+        module.apply(disable_observer)
+    except (ImportError, AttributeError):
+        pass
 
-    module.apply(disable_observer)
     try:
         from torch.ao.nn.intrinsic.qat import freeze_bn_stats
-    except ImportError:
-        return
-    module.apply(freeze_bn_stats)
+        module.apply(freeze_bn_stats)
+    except (ImportError, AttributeError):
+        pass
 
 
 def _make_views_layout_safe(module: nn.Module) -> None:
@@ -131,20 +134,31 @@ def apply(
     if not all(isinstance(value, torch.Tensor) for value in example_args):
         logger.info("Skipping QAT quantization: example_input must be a Tensor or tuple of Tensors")
         return model
-
+    
     selected_backend = _select_backend(backend)
     try:
-        from torch.ao.quantization import get_default_qat_qconfig_mapping
-        from torch.ao.quantization.quantize_fx import convert_fx, prepare_qat_fx
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=DeprecationWarning, module="torch.ao.quantization")
+            from torch.ao.quantization import get_default_qat_qconfig_mapping
+            from torch.ao.quantization.quantize_fx import convert_fx, prepare_qat_fx
+
+            qconfig_mapping = get_default_qat_qconfig_mapping(selected_backend)
+            with _quantized_engine(selected_backend):
+                prepared = prepare_qat_fx(model.cpu().train(), qconfig_mapping, example_args)
     except ImportError as exc:
         raise RuntimeError(
             "qat_quantization requires PyTorch FX graph-mode QAT (torch.ao.quantization)"
         ) from exc
+    except Exception as exc:  # noqa: BLE001 - a model may not be FX traceable
+        logger.info("Skipping QAT quantization: could not prepare this model for FX QAT: %s", exc)
+        return model
 
     try:
-        qconfig_mapping = get_default_qat_qconfig_mapping(selected_backend)
-        with _quantized_engine(selected_backend):
-            prepared = prepare_qat_fx(model.cpu().train(), qconfig_mapping, example_args)
+        with warnings.catch_warnings():
+           warnings.filterwarnings("ignore", category=DeprecationWarning)
+           prepared = prepare_qat_fx(model.cpu().train(), qconfig_mapping, example_args)
+        
     except Exception as exc:  # noqa: BLE001 - a model may not be FX traceable
         logger.info("Skipping QAT quantization: could not prepare this model for FX QAT: %s", exc)
         return model
@@ -182,7 +196,9 @@ def apply(
 
     try:
         with _quantized_engine(selected_backend):
-            result = convert_fx(prepared.eval())
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=DeprecationWarning)
+                result = convert_fx(prepared.eval())
     except Exception as exc:  # noqa: BLE001 - leave models unchanged if a backend cannot lower them
         logger.info("Skipping QAT quantization: backend conversion failed: %s", exc)
         return model
