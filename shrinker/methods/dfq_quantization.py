@@ -81,7 +81,8 @@ def _quantized_engine(backend: str) -> Iterator[None]:
     try:
         yield
     finally:
-        torch.backends.quantized.engine = previous
+        if previous in torch.backends.quantized.supported_engines:
+            torch.backends.quantized.engine = previous
 
 
 def _only_user(node: fx.Node) -> Optional[fx.Node]:
