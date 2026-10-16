@@ -133,9 +133,9 @@ def slice_bn(bn: nn.modules.batchnorm._BatchNorm, keep: Indices) -> nn.modules.b
     """New BatchNorm1d/2d containing only the channels in ``keep``."""
     if type(bn) not in (nn.BatchNorm1d, nn.BatchNorm2d):
         raise TypeError(f"Expected nn.BatchNorm1d or nn.BatchNorm2d, got {type(bn).__name__}")
-    device = (bn.weight if bn.weight is not None else bn.running_mean).device
-    idx = _index(keep, bn.num_features, "slice_bn", device)
     ref = bn.weight if bn.weight is not None else bn.running_mean
+    device = ref.device if ref is not None else torch.device("cpu")
+    idx = _index(keep, bn.num_features, "slice_bn", device)
     new = type(bn)(
         len(idx),
         eps=bn.eps,

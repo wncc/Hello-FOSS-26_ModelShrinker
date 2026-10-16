@@ -75,13 +75,19 @@ def apply(
     return model
  
  
-def _filter_parameters(model: nn.Module, name: str, batchnorms: List[str]) -> List[nn.Parameter]:
-    """Every parameter that belongs to the filters of layer ``name`` (one row/entry per filter)."""
-    layer = get_module(model, name)
-    params = [layer.weight]
-    if layer.bias is not None:
-        params.append(layer.bias)
-    for bn_name in batchnorms:
+def _filter_parameters(model: nn.Module, group) -> List[nn.Parameter]:
+    """Every parameter that belongs to the filters of a group (one row/entry per filter).
+
+    A group is usually one layer; layers added together by a residual connection are pruned
+    as one group, so their parameters are scored together.
+    """
+    params = []
+    for name in group.producers:
+        layer = get_module(model, name)
+        params.append(layer.weight)
+        if layer.bias is not None:
+            params.append(layer.bias)
+    for bn_name in group.batchnorms:
         bn = get_module(model, bn_name)
         if bn.affine:
             params += [bn.weight, bn.bias]
@@ -97,7 +103,8 @@ def _taylor_scores(
     loss_fn: Callable,
 ) -> Dict[str, torch.Tensor]:
     """Importance of every filter of every prunable layer, as {layer name: 1-D tensor}."""
-    owned = {name: _filter_parameters(model, name, group.batchnorms) for name, group in prunable.items()}
+    groups = {group.producer: group for group in prunable.values()}  # one entry per group
+    owned = {name: _filter_parameters(model, group) for name, group in groups.items()}
     all_params = [p for params in owned.values() for p in params]
     device = all_params[0].device
  
