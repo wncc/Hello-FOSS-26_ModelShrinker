@@ -22,7 +22,7 @@ from __future__ import annotations
  
 import itertools
 import logging
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple, Union
  
 import torch
 import torch.nn.functional as F
@@ -30,7 +30,7 @@ from torch import nn
  
 from shrinker.dependency import analyze
 from shrinker.registry import register
-from shrinker.utils import get_module, keep_indices, prune_channels
+from shrinker.utils import get_module, keep_indices, prune_channels, resolve_ratios
  
 logger = logging.getLogger(__name__)
  
@@ -42,7 +42,7 @@ def apply(
     model: nn.Module,
     *,
     loader: Iterable,
-    ratio: float = 0.3,
+    ratio: Union[float, Dict[str, float]]= 0.3,
     num_batches: int = 10,
     reduce: str = "sum_of_squares",
     loss_fn: Optional[Callable] = None,
@@ -50,13 +50,12 @@ def apply(
     """Remove the filters/neurons with the lowest first-order Taylor importance.
  
     loader:      yields (inputs, labels) batches used to estimate importance.
-    ratio:       fraction of filters/neurons to remove from every prunable layer.
+    ratio:       ratio:fraction to remove from every prunable layer, or {layer name: fraction} (layers missing from the dict are left unpruned).
     num_batches: number of batches to average the importance over.
     reduce:      "sum_of_squares" or "square_of_sum" (see the module docstring).
     loss_fn:     loss(outputs, labels); defaults to cross-entropy.
     """
-    if not 0.0 <= ratio < 1.0:
-        raise ValueError(f"ratio must be in [0, 1), got {ratio}")
+    ratios = resolve_ratios(model, ratio)
     if num_batches < 1:
         raise ValueError(f"num_batches must be at least 1, got {num_batches}")
     if reduce not in _REDUCTIONS:
@@ -65,13 +64,14 @@ def apply(
     prunable, skipped = analyze(model)
     for name, reason in skipped.items():
         logger.info("Skipping %s: %s", name, reason)
+    prunable = {name: group for name, group in prunable.items() if name in ratios}
     if not prunable:
         logger.info("No prunable layers found; returning the model unchanged")
         return model
  
     scores = _taylor_scores(model, prunable, loader, num_batches, reduce, loss_fn or F.cross_entropy)
     for name, layer_scores in scores.items():
-        prune_channels(model, name, keep_indices(layer_scores, ratio))
+        prune_channels(model, name, keep_indices(layer_scores, ratios[name]))
     return model
  
  
