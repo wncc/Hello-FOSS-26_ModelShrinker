@@ -154,23 +154,7 @@ def apply(
         logger.info("Skipping QAT quantization: could not prepare this model for FX QAT: %s", exc)
         return model
 
-    try:
-        with warnings.catch_warnings():
-           warnings.filterwarnings("ignore", category=DeprecationWarning)
-           prepared = prepare_qat_fx(model.cpu().train(), qconfig_mapping, example_args)
-        
-    except Exception as exc:  # noqa: BLE001 - a model may not be FX traceable
-        logger.info("Skipping QAT quantization: could not prepare this model for FX QAT: %s", exc)
-        return model
 
-    try:
-        optimizer = torch.optim.Adam(prepared.parameters(), lr=lr)
-        loss_fn = nn.CrossEntropyLoss()
-        try:
-            batches_per_epoch = len(loader)
-        except TypeError:
-            batches_per_epoch = 0
-        freeze_after = int(epochs * batches_per_epoch * observer_freeze_fraction)
         step = 0
         frozen = False
 
