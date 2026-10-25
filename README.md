@@ -94,6 +94,7 @@ Speed ("latency") is measured by actually running the model, not estimated.
 |---|---|
 | `compress(model, method, example_input=None, **options)` | Returns a smaller **copy** of your model using the chosen method. The original is never changed. If `example_input` is given, it checks the output shape is unchanged. |
 | `compress_to_target(model, method, target, target_value, val_loader=None, example_input=None, **options)` | Sweeps compression strengths and returns the model that meets your goal: the mildest compression reaching a `latency_ms`/`size_mb`/`Mflops`/`params` target, or the strongest compression within a `max_accuracy_drop` budget. Prints a report and falls back to the closest candidate if the target is unreachable. |
+| `Pipeline(steps)` | Chains several methods, e.g. pruning then quantization. Each step is a method name or a `(name, options)` pair. Call it like a function: `Pipeline(steps)(model, example_input=None)`. See [Combine methods](#combine-methods). |
 | `compare(original, compressed, example_input, val_loader=None, device="cpu")` | Prints params, size, latency, MFLOPs and accuracy for both models side by side, and returns the numbers as a dict. Accuracy needs `val_loader`. |
 | `finetune(model, train_loader, epochs=5, lr=1e-3, device="cpu", optimizer="adam")` | Retrains the compressed model in place (cross-entropy loss) to win back accuracy. `optimizer` can be `"adam"` or `"sgd"`. |
 | `analyze_sensitivity(model, loader, ratios=(0.1, 0.2, ...), score_fn=None, max_batches=None)` | Measures validation accuracy after pruning each prunable layer independently at different ratios, then reports the baseline and per-layer accuracy drop. Useful for finding which layers are most sensitive before compressing the model. |
@@ -146,6 +147,18 @@ followed by the measured metrics of the original and the chosen model.
 | `Mflops` | at most this many million FLOPs per forward pass | `example_input` |
 | `params` | at most this many parameters | — |
 | `max_accuracy_drop` | loses at most this much accuracy vs. the original (`0.02` = 2 points) | `val_loader` |
+
+
+## Combine methods
+
+To apply several methods in a row, use a `Pipeline`. Each step is a method name or a `(name, options)` pair:
+
+```python
+pipe = shrinker.Pipeline([("l1_pruning", {"ratio": 0.3}), "dfq_quantization"])
+small = pipe(model, example_input=example)
+```
+
+Steps run in the order given, and quantization must come last.
 
 
 Try the full flow yourself (no download needed, under a minute):
