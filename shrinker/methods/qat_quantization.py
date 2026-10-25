@@ -48,7 +48,8 @@ def _quantized_engine(backend: str) -> Iterator[None]:
     try:
         yield
     finally:
-        torch.backends.quantized.engine = previous
+        if previous in torch.backends.quantized.supported_engines:
+            torch.backends.quantized.engine = previous
 
 
 def _freeze_qat_statistics(module: nn.Module) -> None:
