@@ -6,7 +6,7 @@ from .registry import describe_methods, list_methods, register
 from .sensitivity import SensitivityPoint, SensitivityResult, analyze_sensitivity
 from .target import compress_to_target
 from . import methods  # noqa: F401,E402
-
+from .export import export_onnx
 __version__ = "0.1.0"
 
 __all__ = [
