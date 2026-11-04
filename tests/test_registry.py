@@ -15,6 +15,13 @@ def test_l1_pruning_registered():
     assert "l1_pruning" in describe_methods()
 
 
+@pytest.mark.parametrize("name", ["l1_pruning", "fpgm", "gradient_based"])
+def test_pruning_methods_registered_as_pruning(name):
+    # test_methods_combine orders pairs by kind, so a wrong kind hides prune -> quantize pairs
+    assert REGISTRY[name].kind == "pruning"
+    assert REGISTRY[name].paper
+
+
 def test_duplicate_name_rejected(restore_registry):
     with pytest.raises(ValueError, match="Two files register the method name 'l1_pruning'"):
 

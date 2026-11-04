@@ -14,7 +14,7 @@ from shrinker.registry import register
 from shrinker.utils import keep_indices, prunable_layers, prune_channels
 
 
-@register
+@register(kind="pruning", paper="https://arxiv.org/abs/1811.00250")
 def apply(model: nn.Module, ratio: float = 0.3) -> nn.Module:
     """Remove the most redundant filters/neurons: those closest to the geometric median."""
     for name, layer in prunable_layers(model):
