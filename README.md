@@ -156,7 +156,7 @@ python examples/demo.py --synthetic
 
 ## Contributing
 
-Pick an open [issue](https://github.com/bandiarham07-bot/Model-Shrinker/issues) and comment that you are working on it. You can also open a new issue to suggest a method or report a bug.
+Pick an open [issue](https://github.com/wncc/Hello-FOSS-26_ModelShrinker/issues) and comment that you are working on it. You can also open a new issue to suggest a method or report a bug.
 
 1. Fork the repository and install it: `pip install -e ".[dev]"`
 2. Create a branch for your issue (`git checkout -b fix/short-name`)
