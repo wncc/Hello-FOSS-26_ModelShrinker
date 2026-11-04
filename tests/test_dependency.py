@@ -182,6 +182,24 @@ def test_pruning_every_layer_matches_reference(model_name):
     assert sum(p.numel() for p in pruned.parameters()) < sum(p.numel() for p in base.parameters())
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
+@pytest.mark.parametrize("model_name", list(MODELS))
+def test_pruning_on_cuda_matches_cpu(model_name):
+    cls, shape = MODELS[model_name]
+    base = randomize_bn(cls()).eval()
+    x = torch.randn(*shape)
+    groups, _ = analyze(base)
+
+    on_cpu, on_gpu = copy.deepcopy(base), copy.deepcopy(base).cuda()
+    for name in groups:
+        n = num_out(get_module(base, name))
+        keep = torch.randperm(n)[: max(1, n // 2)].sort().values
+        prune_channels(on_cpu, name, keep)
+        prune_channels(on_gpu, name, keep.cuda())  # keep lives on the model's device, as in the methods
+    with torch.no_grad():
+        assert torch.allclose(on_gpu(x.cuda()).cpu(), on_cpu(x), atol=1e-3, rtol=1e-3)
+
+
 def test_expected_groups_for_test_models():
     vgg, _ = analyze(TEST_MODELS["SmallVGG"][0]())
     assert vgg["features.0"].batchnorms == ["features.1"]
