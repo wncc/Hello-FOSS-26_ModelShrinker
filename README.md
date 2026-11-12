@@ -97,6 +97,7 @@ Speed ("latency") is measured by actually running the model, not estimated.
 | `compare(original, compressed, example_input, val_loader=None, device="cpu")` | Prints params, size, latency, MFLOPs and accuracy for both models side by side, and returns the numbers as a dict. Accuracy needs `val_loader`. |
 | `finetune(model, train_loader, epochs=5, lr=1e-3, device="cpu", optimizer="adam")` | Retrains the compressed model in place (cross-entropy loss) to win back accuracy. `optimizer` can be `"adam"` or `"sgd"`. |
 | `analyze_sensitivity(model, loader, ratios=(0.1, 0.2, ...), score_fn=None, max_batches=None)` | Measures validation accuracy after pruning each prunable layer independently at different ratios, then reports the baseline and per-layer accuracy drop. Useful for finding which layers are most sensitive before compressing the model. |
+| `summary(model, example_input=None)` | Prints one row per `Conv2d`/`Linear` layer (name, type, weight shape, parameter count) and says whether it can be pruned — and if not, why. Returns the rows as a list of dicts. With `example_input`, each layer's output shape is shown too. |
 | `list_methods()` | Returns the names of all installed methods. |
 | `describe_methods()` | Returns a table of every installed method with its type and a one-line description. |
 
