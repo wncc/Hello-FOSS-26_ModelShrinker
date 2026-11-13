@@ -79,7 +79,8 @@ def test_method_contract(name, model_name):
     for k in before:
         assert torch.equal(before[k], after[k]), f"original model changed: {k}"
 
-    assert count_parameters(small) <= count_parameters(original)
+    # DFQ's bias absorption/correction adds a bias to a few bias-free convs, hence the small tolerance.
+    assert count_parameters(small) <= count_parameters(original) * 1.01
     assert model_size_mb(small) <= model_size_mb(original) * 1.01
 
     # Some PyTorch model types (e.g. FX-quantized) can't be pickled; that's not the method's fault.
