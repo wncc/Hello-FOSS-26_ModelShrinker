@@ -275,6 +275,35 @@ def test_bisection_refines_toward_the_target(fake_bench, fake_methods):
     assert len(fake.knobs_evaluated()) > 9  # grid points plus bisection mids
 
 
+def test_bisection_covers_the_gap_before_the_first_grid_point(fake_bench, fake_methods, capsys):
+    fake = fake_bench(latency_ms=lat)
+    # the boundary (latency 9.6) is at ratio 0.05: between the uncompressed model
+    # (ratio 0, 10 ms) and the first grid point (0.1, 9.2 ms)
+    model = compress_to_target(nn.Linear(4, 2), "knob_sweep", "latency_ms", 9.6)
+    assert 0 < model.knob < 0.1  # milder than any grid point
+    assert lat(0.1) < lat(model.knob) <= 9.6  # feasible, and closer to the target than 0.1
+    assert len(fake.knobs_evaluated()) > 9
+    assert 0.0 not in fake.knobs_evaluated()  # the uncompressed model is only a bracket end
+    assert "target_reached : True" in capsys.readouterr().out
+
+
+def test_accuracy_budget_tighter_than_the_first_grid_point_is_still_met(fake_bench, fake_methods, capsys):
+    fake_bench(accuracy=acc)
+    # ratio 0.1 already drops 0.03 > 0.01, but a milder ratio fits the budget
+    model = compress_to_target(nn.Linear(4, 2), "knob_sweep", "max_accuracy_drop", 0.01, val_loader=object())
+    assert 0 < model.knob < 0.1
+    assert 0.95 - acc(model.knob) <= 0.01
+    assert "target_reached : True" in capsys.readouterr().out
+
+
+def test_target_already_met_by_the_original_needs_no_extra_evaluations(fake_bench, fake_methods):
+    fake = fake_bench(latency_ms=lat)
+    # 20 ms is above the uncompressed 10 ms: nothing to bracket before the first grid point
+    model = compress_to_target(nn.Linear(4, 2), "knob_sweep", "latency_ms", 20.0)
+    assert model.knob == 0.1
+    assert len(fake.knobs_evaluated()) == 9
+
+
 def test_fluke_fast_measurement_does_not_fool_selection(fake_bench, fake_methods):
     fake = fake_bench(latency_ms=flaky_latency)
     model = compress_to_target(nn.Linear(4, 2), "knob_sweep", "latency_ms", 5.0, ratios=GRID, refine_steps=0)
