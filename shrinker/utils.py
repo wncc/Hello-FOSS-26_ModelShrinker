@@ -133,9 +133,11 @@ def slice_bn(bn: nn.modules.batchnorm._BatchNorm, keep: Indices) -> nn.modules.b
     """New BatchNorm1d/2d containing only the channels in ``keep``."""
     if type(bn) not in (nn.BatchNorm1d, nn.BatchNorm2d):
         raise TypeError(f"Expected nn.BatchNorm1d or nn.BatchNorm2d, got {type(bn).__name__}")
-    device = (bn.weight if bn.weight is not None else bn.running_mean).device
-    idx = _index(keep, bn.num_features, "slice_bn", device)
+    # With affine=False and track_running_stats=False the layer holds no tensors at all,
+    # so there is no device or dtype to carry over.
     ref = bn.weight if bn.weight is not None else bn.running_mean
+    device = None if ref is None else ref.device
+    idx = _index(keep, bn.num_features, "slice_bn", device or torch.device("cpu"))
     new = type(bn)(
         len(idx),
         eps=bn.eps,
