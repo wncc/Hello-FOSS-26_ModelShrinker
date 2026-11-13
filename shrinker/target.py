@@ -155,9 +155,17 @@ def compress_to_target(
                 points.append(point)
                 candidates.append(point)
 
-        # Bisect inside every grid interval whose metric crosses the target,
+        # The uncompressed model is knob 0, so a target that falls before the
+        # first grid point can be bracketed too. It is only a bracket end, never
+        # a candidate: the result is always a compressed model.
+        brackets = list(zip(points, points[1:]))
+        if points and points[0]["ratio"] > 0:
+            base_value = 0.0 if target == "max_accuracy_drop" else baseline[metric_key]
+            brackets.insert(0, ({"ratio": 0.0, "value": base_value}, points[0]))
+
+        # Bisect inside every interval whose metric crosses the target,
         # to land closer to it than any grid point can.
-        for lo, hi in zip(points, points[1:]):
+        for lo, hi in brackets:
             if (lo["value"] - target_value) * (hi["value"] - target_value) >= 0:
                 continue  # no crossing inside this interval
             for _ in range(max(0, refine_steps)):
