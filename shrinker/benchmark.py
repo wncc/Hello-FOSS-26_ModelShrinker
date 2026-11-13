@@ -4,19 +4,45 @@ import contextlib
 import io
 import statistics
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 import torch
 from torch import nn
 
 
+def _is_quantized(m: nn.Module, kind: str) -> bool:
+    """True for the converted INT8 ``Conv2d`` / ``Linear`` kernels, including fused ConvReLU2d / LinearReLU."""
+    try:
+        import torch.ao.nn.quantized as nnq
+    except ImportError:  # the torch.ao quantization stack is not available
+        return False
+    return isinstance(m, getattr(nnq, kind))
+
+
+def _packed_tensors(model: nn.Module) -> Iterator[torch.Tensor]:
+    """Weights and biases of quantized layers. They are packed INT8 data, not ``nn.Parameter``s,
+    so ``model.parameters()`` doesn't see them."""
+    for m in model.modules():
+        if _is_quantized(m, "Conv2d") or _is_quantized(m, "Linear"):
+            yield m.weight().dequantize()
+            bias = m.bias()
+            # packing fills in an all-zero bias for a layer that had none; that is not a parameter
+            if bias is not None and bool(torch.count_nonzero(bias)):
+                yield bias
+
+
+def _tensors(model: nn.Module) -> Iterator[torch.Tensor]:
+    yield from model.parameters()
+    yield from _packed_tensors(model)
+
+
 def count_parameters(model: nn.Module) -> int:
-    return sum(p.numel() for p in model.parameters())
+    return sum(p.numel() for p in _tensors(model))
 
 
 def count_nonzero_parameters(model: nn.Module) -> int:
     """Parameter count minus zeroed entries of weight tensors (biases/BatchNorm always count)."""
-    return sum(int(torch.count_nonzero(p)) if p.dim() > 1 else p.numel() for p in model.parameters())
+    return sum(int(torch.count_nonzero(p)) if p.dim() > 1 else p.numel() for p in _tensors(model))
 
 
 def model_size_mb(model: nn.Module) -> float:
@@ -73,21 +99,27 @@ def measure_latency(
     return statistics.median(times)
 
 
-def count_flops(model: nn.Module, example_input: Any) -> int:
-    """FLOPs of the Conv2d and Linear layers for one forward pass."""
+def count_flops(model: nn.Module, example_input: Any) -> Optional[int]:
+    """FLOPs of the Conv2d and Linear layers (float or quantized) for one forward pass.
+
+    Returns ``None`` when no such layer ran, so an unmeasured model is not reported as 0 FLOPs.
+    """
     total = [0]
+    counted = [False]
 
     def conv_hook(m, inp, out):
+        counted[0] = True
         total[0] += out.numel() * (m.in_channels // m.groups) * m.kernel_size[0] * m.kernel_size[1]
 
     def linear_hook(m, inp, out):
+        counted[0] = True
         total[0] += out.numel() * m.in_features
 
     handles = []
     for m in model.modules():
-        if type(m) is nn.Conv2d:
+        if type(m) is nn.Conv2d or _is_quantized(m, "Conv2d"):
             handles.append(m.register_forward_hook(conv_hook))
-        elif type(m) is nn.Linear:
+        elif type(m) is nn.Linear or _is_quantized(m, "Linear"):
             handles.append(m.register_forward_hook(linear_hook))
     try:
         with _eval_on(model, "cpu"), torch.no_grad():
@@ -95,7 +127,7 @@ def count_flops(model: nn.Module, example_input: Any) -> int:
     finally:
         for h in handles:
             h.remove()
-    return 2 * total[0]
+    return 2 * total[0] if counted[0] else None
 
 
 def evaluate(model: nn.Module, loader, device: str = "cpu") -> float:
