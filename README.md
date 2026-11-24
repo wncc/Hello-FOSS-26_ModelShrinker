@@ -81,6 +81,7 @@ Speed ("latency") is measured by actually running the model, not estimated.
 | `fpgm` | Removes the most redundant filters, those closest to the geometric median | [He et al. 2019](https://arxiv.org/abs/1811.00250) |
 | `qat_quantization` | Quantization-aware training, gives an INT8 model for CPU | [Jacob et al. 2018](https://arxiv.org/abs/1712.05877) |
 | `dfq_quantization` | Data-free INT8 quantization with weight equalization and bias correction | [Nagel et al. 2019](https://arxiv.org/abs/1906.04721) |
+| `ptq_quantization` | Static INT8 post-training quantization: a few calibration batches set the activation ranges, no training needed | [Krishnamoorthi & Sankaran 2019](https://arxiv.org/abs/1806.08342) |
 | `knowledge_distillation` | Trains the model to match a frozen copy of itself, then zeroes the weakest weights | [Hinton et al. 2015](https://arxiv.org/abs/1503.02531) |
 | `gradient_based` | Removes filters whose removal hurts the loss least, estimated with gradients | [Molchanov et al. 2019](https://arxiv.org/abs/1906.10771) |
 | HRank | Removes filters whose feature maps carry little information | [Lin et al. 2020](https://arxiv.org/abs/2002.10179) |
