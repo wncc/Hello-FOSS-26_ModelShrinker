@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence, Union
+from typing import Dict, Sequence, Union
 
 import torch
 from torch import nn
@@ -154,5 +154,18 @@ def slice_bn(bn: nn.modules.batchnorm._BatchNorm, keep: Indices) -> nn.modules.b
         new.num_batches_tracked.copy_(bn.num_batches_tracked)
     return new.train(bn.training)
 
+def resolve_ratios(model: nn.Module, ratio: Union[float, Dict[str, float]]) -> Dict[str, float]:
+    """Turn ``ratio`` (a float, or {layer name: float}) into {layer name: float} for prunable layers."""
+    prunable, skipped = analyze(model)
+    if isinstance(ratio, dict):
+        for name, value in ratio.items():
+            if name not in prunable:
+                reason = skipped.get(name, "no Conv2d/Linear layer has this name")
+                raise ValueError(f"Layer {name!r} can't be pruned: {reason}")
+            keep_indices(torch.ones(1), value)
+        return dict(ratio)
+    keep_indices(torch.ones(1), ratio)
+    return {name: ratio for name in prunable}
 
-from .dependency import prunable_layers, prune_channels, skipped_layers  # noqa: E402,F401
+
+from .dependency import analyze, prunable_layers, prune_channels, skipped_layers  # noqa: E402,F401
