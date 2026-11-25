@@ -26,6 +26,9 @@ def compress(
     """
     if not isinstance(model, nn.Module):
         raise TypeError(f"compress() expects an nn.Module, got {type(model).__name__}")
+    if not isinstance(method, str):
+        hint = " To apply several methods, use shrinker.Pipeline([...])." if isinstance(method, (list, tuple)) else ""
+        raise TypeError(f"compress() expects a method name (str), got {type(method).__name__}.{hint}")
     info = get_method(method)
 
     try:
