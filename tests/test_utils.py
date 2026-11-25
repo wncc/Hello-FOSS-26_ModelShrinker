@@ -55,6 +55,38 @@ def test_slice_bn(affine):
     assert torch.allclose(new(x[:, KEEP]), bn(x)[:, KEEP], atol=1e-6)
 
 
+@pytest.mark.parametrize("affine", [True, False])
+@pytest.mark.parametrize("bn_type", [nn.BatchNorm1d, nn.BatchNorm2d])
+def test_slice_bn_without_running_stats(bn_type, affine):
+    # affine=False with track_running_stats=False leaves the layer with no tensors at all
+    bn = bn_type(8, affine=affine, track_running_stats=False)
+    if affine:
+        with torch.no_grad():
+            bn.weight.uniform_(0.5, 1.5)
+            bn.bias.uniform_(-0.5, 0.5)
+    x = torch.randn(4, 8) if bn_type is nn.BatchNorm1d else torch.randn(4, 8, 4, 4)
+    new = slice_bn(bn, KEEP)
+    assert type(new) is bn_type and new.num_features == 3
+    assert (new.affine, new.track_running_stats) == (affine, False)
+    assert torch.allclose(new(x[:, KEEP]), bn(x)[:, KEEP], atol=1e-6)
+
+
+def test_pruning_a_layer_followed_by_a_batchnorm_without_tensors():
+    from shrinker import compress
+
+    model = nn.Sequential(
+        nn.Conv2d(3, 8, 3, padding=1),
+        nn.BatchNorm2d(8, affine=False, track_running_stats=False),
+        nn.ReLU(),
+        nn.Conv2d(8, 4, 3, padding=1),
+        nn.AdaptiveAvgPool2d(1),
+        nn.Flatten(),
+        nn.Linear(4, 2),
+    )
+    small = compress(model, "l1_pruning", ratio=0.5, example_input=torch.randn(2, 3, 8, 8))
+    assert small[0].out_channels == 4 and small[1].num_features == 4
+
+
 def test_slicing_makes_new_modules_and_keeps_mode():
     lin = nn.Linear(8, 6).eval()
     new = slice_linear_out(lin, KEEP)

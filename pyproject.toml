@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Make trained PyTorch MLPs and CNNs smaller and faster: pruning, quantization, and more."
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = ["torch>=2.0"]
 
 [project.optional-dependencies]
