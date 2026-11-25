@@ -47,7 +47,10 @@ def _quantized_engine(backend: str) -> Iterator[None]:
     try:
         yield
     finally:
-        torch.backends.quantized.engine = previous
+        # On some platforms (e.g. Apple Silicon) the default engine is 'none',
+        # which cannot be assigned back.
+        if previous in torch.backends.quantized.supported_engines:
+            torch.backends.quantized.engine = previous
 
 
 def _make_views_layout_safe(module: nn.Module) -> None:
