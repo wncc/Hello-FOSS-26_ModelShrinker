@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence, Union
+from typing import Dict, Sequence, Union
 
 import torch
 from torch import nn
@@ -133,9 +133,11 @@ def slice_bn(bn: nn.modules.batchnorm._BatchNorm, keep: Indices) -> nn.modules.b
     """New BatchNorm1d/2d containing only the channels in ``keep``."""
     if type(bn) not in (nn.BatchNorm1d, nn.BatchNorm2d):
         raise TypeError(f"Expected nn.BatchNorm1d or nn.BatchNorm2d, got {type(bn).__name__}")
-    device = (bn.weight if bn.weight is not None else bn.running_mean).device
-    idx = _index(keep, bn.num_features, "slice_bn", device)
+    # With affine=False and track_running_stats=False the layer holds no tensors at all,
+    # so there is no device or dtype to carry over.
     ref = bn.weight if bn.weight is not None else bn.running_mean
+    device = None if ref is None else ref.device
+    idx = _index(keep, bn.num_features, "slice_bn", device or torch.device("cpu"))
     new = type(bn)(
         len(idx),
         eps=bn.eps,
@@ -154,5 +156,18 @@ def slice_bn(bn: nn.modules.batchnorm._BatchNorm, keep: Indices) -> nn.modules.b
         new.num_batches_tracked.copy_(bn.num_batches_tracked)
     return new.train(bn.training)
 
+def resolve_ratios(model: nn.Module, ratio: Union[float, Dict[str, float]]) -> Dict[str, float]:
+    """Turn ``ratio`` (a float, or {layer name: float}) into {layer name: float} for prunable layers."""
+    prunable, skipped = analyze(model)
+    if isinstance(ratio, dict):
+        for name, value in ratio.items():
+            if name not in prunable:
+                reason = skipped.get(name, "no Conv2d/Linear layer has this name")
+                raise ValueError(f"Layer {name!r} can't be pruned: {reason}")
+            keep_indices(torch.ones(1), value)
+        return dict(ratio)
+    keep_indices(torch.ones(1), ratio)
+    return {name: ratio for name in prunable}
 
-from .dependency import prunable_layers, prune_channels, skipped_layers  # noqa: E402,F401
+
+from .dependency import analyze, prunable_layers, prune_channels, skipped_layers  # noqa: E402,F401

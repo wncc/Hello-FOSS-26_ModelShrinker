@@ -15,15 +15,14 @@ safe alternative to guessing static activation ranges for arbitrary inputs.
 from __future__ import annotations
 
 import logging
-import platform
-from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 import torch
 import torch.fx as fx
 from torch import Tensor, nn
 
+from shrinker.methods._quantization_common import _as_args, _quantized_engine, _select_backend
 from shrinker.registry import register
 from shrinker.utils import get_module, replace_module
 
@@ -50,38 +49,6 @@ class _ActivationStats:
     scale: float
     zero_point: int
     maximum: float
-
-
-def _as_args(example_input: Any) -> Tuple[Any, ...]:
-    return example_input if isinstance(example_input, tuple) else (example_input,)
-
-
-def _select_backend(backend: str) -> str:
-    """Return a supported CPU quantization backend for ``backend``."""
-    available = tuple(torch.backends.quantized.supported_engines)
-    if backend == "auto":
-        machine = platform.machine().lower()
-        candidates = ("qnnpack",) if machine.startswith(("arm", "aarch64")) else ("x86", "onednn", "fbgemm")
-        for candidate in candidates:
-            if candidate in available:
-                return candidate
-        raise RuntimeError(f"No supported CPU quantization backend is available; PyTorch reports {available}")
-    if backend not in ("x86", "fbgemm", "onednn", "qnnpack"):
-        raise ValueError("backend must be 'auto', 'x86', 'fbgemm', 'onednn', or 'qnnpack'")
-    if backend not in available:
-        raise RuntimeError(f"Quantization backend {backend!r} is unavailable; PyTorch reports {available}")
-    return backend
-
-
-@contextmanager
-def _quantized_engine(backend: str) -> Iterator[None]:
-    """Temporarily select a quantized CPU backend without leaking global state."""
-    previous = torch.backends.quantized.engine
-    torch.backends.quantized.engine = backend
-    try:
-        yield
-    finally:
-        torch.backends.quantized.engine = previous
 
 
 def _only_user(node: fx.Node) -> Optional[fx.Node]:
