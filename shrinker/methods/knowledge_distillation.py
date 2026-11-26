@@ -4,8 +4,8 @@ A teacher model teaches a smaller student to match its soft probability outputs
 as well as the true labels.
 
 By default, the student is a copy of the teacher with safely prunable layers
-reduced by ``ratio``; LSTM/GRU hidden sizes and Transformer feed-forward layers
-are reduced too. If nothing can be pruned safely, the method raises a clear
+reduced by ``ratio``; LSTM/GRU hidden sizes and Transformer attention heads and
+feed-forward layers are reduced too. If nothing can be pruned safely, the method raises a clear
 error. You can provide your own smaller model with ``student=``.
 
 The teacher is not modified. The trained student is returned. Optionally, a
@@ -36,7 +36,7 @@ from shrinker.utils import (
 
 logger = logging.getLogger(__name__)
 
-_SEQUENCE_METHODS = ("rnn_hidden_pruning", "ffn_pruning")
+_SEQUENCE_METHODS = ("rnn_hidden_pruning", "head_pruning", "ffn_pruning")
 
 
 def _soft_target_loss(

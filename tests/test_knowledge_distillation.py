@@ -143,6 +143,7 @@ def test_default_student_shrinks_rnn_and_transformer_layers():
     assert lstm.rnn.hidden_size == 16
     transformer = compress(SmallTransformer(), "knowledge_distillation", loader=make_loader((6, 16)), epochs=1)
     assert all(layer.linear1.out_features == 32 for layer in transformer.encoder.layers)
+    assert all(layer.self_attn.num_heads == 2 for layer in transformer.encoder.layers)
 
 
 # --- when no smaller student can be built ------------------------------------------------------
