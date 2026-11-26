@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict, Sequence, Union
+import contextlib
+from typing import Any, Dict, Iterable, Iterator, Sequence, Union
 
 import torch
 from torch import nn
@@ -168,6 +169,54 @@ def resolve_ratios(model: nn.Module, ratio: Union[float, Dict[str, float]]) -> D
         return dict(ratio)
     keep_indices(torch.ones(1), ratio)
     return {name: ratio for name in prunable}
+
+
+def resolve_module_ratios(names: Iterable[str], ratio: Union[float, Dict[str, float]], what: str) -> Dict[str, float]:
+    """Like ``resolve_ratios``, for methods that prune inside whole modules (an nn.LSTM, a Transformer layer)."""
+    names = list(names)
+    if isinstance(ratio, dict):
+        for name, value in ratio.items():
+            if name not in names:
+                raise ValueError(f"{name!r} is not one of the {what} in this model: {names}")
+            keep_indices(torch.ones(1), value)
+        return dict(ratio)
+    keep_indices(torch.ones(1), ratio)
+    return {name: ratio for name in names}
+
+
+def is_shared(model: nn.Module, module: nn.Module) -> bool:
+    """True if ``module`` is registered under more than one name, so its weights are tied."""
+    return sum(m is module for _, m in model.named_modules(remove_duplicate=False)) > 1
+
+
+@contextlib.contextmanager
+def unfused_transformer_layers(x: Any) -> Iterator[Any]:
+    """Run nn.Transformer layers op by op, so hooks on the modules inside them fire.
+
+    In eval mode PyTorch may run a whole encoder layer as one fused kernel. PyTorch 2.1+ has a
+    switch for that; 2.0 only skips the fused path while autograd is recording, so there the
+    inputs are made to require grad. Use the yielded ``x`` in place of the original.
+    """
+    mha = getattr(torch.backends, "mha", None)
+    if hasattr(mha, "set_fastpath_enabled"):
+        previous = mha.get_fastpath_enabled()
+        mha.set_fastpath_enabled(False)
+        try:
+            with torch.no_grad():
+                yield x
+        finally:
+            mha.set_fastpath_enabled(previous)
+    else:
+        with torch.enable_grad():
+            yield _requires_grad(x)
+
+
+def _requires_grad(x: Any):
+    if isinstance(x, (tuple, list)):
+        return type(x)(_requires_grad(t) for t in x)
+    if isinstance(x, torch.Tensor) and x.is_floating_point():
+        return x.detach().requires_grad_(True)
+    return x
 
 
 from .dependency import analyze, prunable_layers, prune_channels, skipped_layers  # noqa: E402,F401
