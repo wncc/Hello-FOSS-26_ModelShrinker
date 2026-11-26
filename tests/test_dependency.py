@@ -108,8 +108,11 @@ class Unused(nn.Module):
         return self.fc2(F.relu(self.fc1(x)))
 
 
+# No Conv2d/Linear group to analyze in these; rnn_hidden_pruning and ffn_pruning have their own tests.
+SEQUENCE_MODELS = {"SmallLSTM", "SmallGRU", "SmallTransformer"}
+
 MODELS = {
-    **{name: (cls, shape) for name, (cls, shape) in TEST_MODELS.items()},
+    **{name: (cls, shape) for name, (cls, shape) in TEST_MODELS.items() if name not in SEQUENCE_MODELS},
     "FunctionalCNN": (FunctionalCNN, (3, 3, 16, 16)),
     "FanOut": (FanOut, (2, 3, 8, 8)),
 }

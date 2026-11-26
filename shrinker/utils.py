@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Dict, Iterator, Sequence, Union
+from typing import Any, Dict, Iterable, Iterator, Sequence, Union
 
 import torch
 from torch import nn
@@ -169,6 +169,24 @@ def resolve_ratios(model: nn.Module, ratio: Union[float, Dict[str, float]]) -> D
         return dict(ratio)
     keep_indices(torch.ones(1), ratio)
     return {name: ratio for name in prunable}
+
+
+def resolve_module_ratios(names: Iterable[str], ratio: Union[float, Dict[str, float]], what: str) -> Dict[str, float]:
+    """Like ``resolve_ratios``, for methods that prune inside whole modules (an nn.LSTM, a Transformer layer)."""
+    names = list(names)
+    if isinstance(ratio, dict):
+        for name, value in ratio.items():
+            if name not in names:
+                raise ValueError(f"{name!r} is not one of the {what} in this model: {names}")
+            keep_indices(torch.ones(1), value)
+        return dict(ratio)
+    keep_indices(torch.ones(1), ratio)
+    return {name: ratio for name in names}
+
+
+def is_shared(model: nn.Module, module: nn.Module) -> bool:
+    """True if ``module`` is registered under more than one name, so its weights are tied."""
+    return sum(m is module for _, m in model.named_modules(remove_duplicate=False)) > 1
 
 
 @contextlib.contextmanager
