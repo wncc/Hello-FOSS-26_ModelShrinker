@@ -2,13 +2,16 @@ from . import utils  # noqa: F401  must be imported before dependency/methods
 from .benchmark import compare
 from .core import CompressionError, compress
 from .finetune import finetune
+from .pipeline import Pipeline
 from .registry import describe_methods, list_methods, register
 from .sensitivity import SensitivityPoint, SensitivityResult, analyze_sensitivity
+from .summary import summary
+from .target import compress_to_target
 from . import methods  # noqa: F401,E402
 
 __version__ = "0.1.0"
 
 __all__ = [
-    "compress", "compare", "finetune", "list_methods", "describe_methods", "register", "CompressionError",
-    "analyze_sensitivity", "SensitivityPoint", "SensitivityResult",
+    "compress", "compress_to_target", "Pipeline", "compare", "finetune", "list_methods", "describe_methods", "register", "CompressionError",
+    "analyze_sensitivity", "SensitivityPoint", "SensitivityResult", "summary",
 ]

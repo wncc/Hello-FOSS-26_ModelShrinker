@@ -377,7 +377,6 @@ def prune_channels(model: nn.Module, name: str, keep: Indices) -> nn.Module:
             replace_module(model, cname, slice_conv_in(consumer, keep))
         else:
             # channel c owns flattened inputs [c*spatial, (c+1)*spatial)
-            offsets = torch.arange(spatial, device=keep.device)
-            idx = (keep[:, None] * spatial + offsets[None, :]).flatten()
+            idx = (keep[:, None] * spatial + torch.arange(spatial, device=keep.device)[None, :]).flatten()
             replace_module(model, cname, slice_linear_in(consumer, idx))
     return model
