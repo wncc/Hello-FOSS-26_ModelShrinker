@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict, Sequence, Union
+import contextlib
+from typing import Any, Dict, Iterator, Sequence, Union
 
 import torch
 from torch import nn
@@ -168,6 +169,36 @@ def resolve_ratios(model: nn.Module, ratio: Union[float, Dict[str, float]]) -> D
         return dict(ratio)
     keep_indices(torch.ones(1), ratio)
     return {name: ratio for name in prunable}
+
+
+@contextlib.contextmanager
+def unfused_transformer_layers(x: Any) -> Iterator[Any]:
+    """Run nn.Transformer layers op by op, so hooks on the modules inside them fire.
+
+    In eval mode PyTorch may run a whole encoder layer as one fused kernel. PyTorch 2.1+ has a
+    switch for that; 2.0 only skips the fused path while autograd is recording, so there the
+    inputs are made to require grad. Use the yielded ``x`` in place of the original.
+    """
+    mha = getattr(torch.backends, "mha", None)
+    if hasattr(mha, "set_fastpath_enabled"):
+        previous = mha.get_fastpath_enabled()
+        mha.set_fastpath_enabled(False)
+        try:
+            with torch.no_grad():
+                yield x
+        finally:
+            mha.set_fastpath_enabled(previous)
+    else:
+        with torch.enable_grad():
+            yield _requires_grad(x)
+
+
+def _requires_grad(x: Any):
+    if isinstance(x, (tuple, list)):
+        return type(x)(_requires_grad(t) for t in x)
+    if isinstance(x, torch.Tensor) and x.is_floating_point():
+        return x.detach().requires_grad_(True)
+    return x
 
 
 from .dependency import analyze, prunable_layers, prune_channels, skipped_layers  # noqa: E402,F401
