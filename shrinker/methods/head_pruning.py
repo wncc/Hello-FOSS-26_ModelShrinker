@@ -4,7 +4,8 @@ Paper: Michel et al. 2019, Are Sixteen Heads Really Better than One?, https://ar
 
 A head owns slices of the query, key and value projections and the matching columns of out_proj.
 Heads are ranked by the L1 norm of those weights, and self_attn is replaced by a smaller
-PrunedMultiheadAttention. Only self-attention is pruned: the paper found encoder-decoder attention
+PrunedMultiheadAttention. Given a loader, its out_proj is refit by least squares so the kept heads
+reproduce the original attention output. Only self-attention is pruned: the paper found encoder-decoder attention
 much more sensitive to losing heads, so the decoder's cross-attention is left alone.
 """
 
@@ -13,9 +14,11 @@ from __future__ import annotations
 import logging
 from typing import Dict, Union
 
+import torch
 from torch import nn
 
 from shrinker.attention import PrunedMultiheadAttention
+from shrinker.methods._calibration import calibration_inputs, record, ridge, set_linear
 from shrinker.registry import register
 from shrinker.utils import is_shared, keep_indices, resolve_module_ratios
 
@@ -25,17 +28,22 @@ _LAYERS = (nn.TransformerEncoderLayer, nn.TransformerDecoderLayer)
 
 
 @register(kind="pruning", paper="https://arxiv.org/abs/1905.10650")
-def apply(model: nn.Module, ratio: Union[float, Dict[str, float]] = 0.25) -> nn.Module:
+def apply(
+    model: nn.Module, ratio: Union[float, Dict[str, float]] = 0.25, loader=None, max_batches: int = 8
+) -> nn.Module:
     """Remove the attention heads with the smallest L1 norm from every Transformer layer.
 
-    ratio: one fraction used for every layer, or {layer name: fraction}. Layers missing from the
-    dict are left unpruned. At least one head is always kept; with few heads the steps are coarse
-    (4 heads and ratio=0.1 removes none).
+    ratio:       one fraction used for every layer, or {layer name: fraction}. Layers missing from
+                 the dict are left unpruned. At least one head is always kept; with few heads the
+                 steps are coarse (4 heads and ratio=0.1 removes none).
+    loader:      optional batches used to refit out_proj; labels are ignored.
+    max_batches: how many loader batches to use.
     """
     layers = {name: m for name, m in model.named_modules() if type(m) in _LAYERS}
     if not layers:
         return model
     ratios = resolve_module_ratios(layers, ratio, "Transformer layers")
+    inputs = calibration_inputs(loader, max_batches)
 
     pruned = False
     for name, layer in layers.items():
@@ -48,7 +56,11 @@ def apply(model: nn.Module, ratio: Union[float, Dict[str, float]] = 0.25) -> nn.
         keep = keep_indices(_head_scores(attn), ratios[name])
         if len(keep) == attn.num_heads:
             continue
-        layer.self_attn = PrunedMultiheadAttention(attn, keep.tolist())
+        smaller = PrunedMultiheadAttention(attn, keep.tolist())
+        if inputs:
+            calls = record(model, [attn], inputs, with_kwargs=True)[attn]
+            set_linear(smaller.out_proj, _fit_out_proj(attn, keep.tolist(), calls))
+        layer.self_attn = smaller
         pruned = True
 
     if pruned:
@@ -76,3 +88,17 @@ def _head_scores(attn: nn.MultiheadAttention):
     w_q, w_k, w_v = attn.in_proj_weight.detach().abs().view(3, H, d, E)
     w_o = attn.out_proj.weight.detach().abs().view(E, H, d)
     return w_q.sum((1, 2)) + w_k.sum((1, 2)) + w_v.sum((1, 2)) + w_o.sum((0, 2))
+
+
+def _fit_out_proj(attn: nn.MultiheadAttention, keep, calls):
+    """Least-squares out_proj taking the kept heads to the output of all heads."""
+    full = PrunedMultiheadAttention(attn, range(attn.num_heads))
+    X, Y = [], []
+    with torch.no_grad():
+        for args, kwargs in calls:
+            masks = {k: kwargs[k] for k in ("key_padding_mask", "attn_mask", "is_causal") if k in kwargs}
+            heads = full.heads(*args[:3], **masks)  # Transformer layers pass query, key, value positionally
+            B, _, L, _ = heads.shape
+            Y.append(full.out_proj(heads.transpose(1, 2).reshape(B, L, -1)).flatten(0, 1))
+            X.append(heads[:, keep].transpose(1, 2).reshape(B * L, -1))
+    return ridge(torch.cat(X), torch.cat(Y))
