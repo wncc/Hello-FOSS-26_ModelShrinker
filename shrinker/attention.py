@@ -50,6 +50,13 @@ class PrunedMultiheadAttention(nn.Module):
 
     def forward(self, query, key, value, key_padding_mask=None, need_weights=False, attn_mask=None,
                 average_attn_weights=True, is_causal=False):
+        heads = self.heads(query, key, value, key_padding_mask, attn_mask, is_causal)
+        B, h, L, d = heads.shape
+        out = self.out_proj(heads.transpose(1, 2).reshape(B, L, h * d))
+        return (out if self.batch_first else out.transpose(0, 1)), None
+
+    def heads(self, query, key, value, key_padding_mask=None, attn_mask=None, is_causal=False) -> torch.Tensor:
+        """Output of each kept head before out_proj, shape (batch, heads, length, head_dim)."""
         if not self.batch_first:
             query, key, value = (t.transpose(0, 1) for t in (query, key, value))
         B, L, _ = query.shape
@@ -59,12 +66,10 @@ class PrunedMultiheadAttention(nn.Module):
         k = self.k(key).view(B, S, h, d).transpose(1, 2)
         v = self.v(value).view(B, S, h, d).transpose(1, 2)
         mask = self._mask(attn_mask, key_padding_mask, B, L, S, q.dtype)
-        out = F.scaled_dot_product_attention(
+        return F.scaled_dot_product_attention(
             q, k, v, attn_mask=mask, dropout_p=self.dropout if self.training else 0.0,
             is_causal=bool(is_causal) and mask is None,
         )
-        out = self.out_proj(out.transpose(1, 2).reshape(B, L, h * d))
-        return (out if self.batch_first else out.transpose(0, 1)), None
 
     def _mask(self, attn_mask, key_padding_mask, B: int, L: int, S: int, dtype) -> Optional[torch.Tensor]:
         """One additive float mask. In nn.MultiheadAttention a True entry means "don't attend"."""

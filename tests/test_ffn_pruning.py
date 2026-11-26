@@ -6,6 +6,7 @@ from torch import nn
 
 from examples.test_models import SmallTransformer
 from shrinker import compress
+from tests.helpers import make_loader
 
 X = torch.randn(3, 6, 16)
 
@@ -107,3 +108,20 @@ def test_ratio_dict_and_unknown_name():
 def test_frozen_weights_stay_frozen():
     pruned = compress(SmallTransformer().requires_grad_(False), "ffn_pruning", ratio=0.5)
     assert not any(p.requires_grad for p in pruned.parameters())
+
+
+def test_refit_brings_outputs_closer_to_the_original():
+    model = SmallTransformer().eval()
+    plain = compress(model, "ffn_pruning", ratio=0.5).eval()
+    refit = compress(model, "ffn_pruning", ratio=0.5, loader=make_loader((6, 16), n=512, batch_size=64)).eval()
+    x = torch.randn(256, *(6, 16))
+    with torch.no_grad():
+        target = model(x)
+        assert (refit(x) - target).pow(2).mean() < (plain(x) - target).pow(2).mean()
+
+
+def test_refit_is_skipped_with_too_little_data():
+    model = SmallTransformer()
+    plain = compress(model, "ffn_pruning", ratio=0.5)
+    tiny = compress(model, "ffn_pruning", ratio=0.5, loader=make_loader((6, 16), n=4, batch_size=2))
+    assert all(torch.equal(a, b) for a, b in zip(plain.state_dict().values(), tiny.state_dict().values()))

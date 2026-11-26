@@ -8,6 +8,7 @@ from examples.test_models import SmallTransformer
 from shrinker import compress
 from shrinker.attention import PrunedMultiheadAttention
 from shrinker.benchmark import count_flops
+from tests.helpers import make_loader
 
 X = torch.randn(3, 6, 16)
 
@@ -136,3 +137,20 @@ def test_frozen_weights_stay_frozen():
 def test_counted_flops_go_down():
     model = SmallTransformer()
     assert count_flops(compress(model, "head_pruning", ratio=0.5), X) < count_flops(model, X)
+
+
+def test_refit_brings_outputs_closer_to_the_original():
+    model = SmallTransformer().eval()
+    plain = compress(model, "head_pruning", ratio=0.5).eval()
+    refit = compress(model, "head_pruning", ratio=0.5, loader=make_loader((6, 16), n=512, batch_size=64)).eval()
+    x = torch.randn(256, *(6, 16))
+    with torch.no_grad():
+        target = model(x)
+        assert (refit(x) - target).pow(2).mean() < (plain(x) - target).pow(2).mean()
+
+
+def test_refit_is_skipped_with_too_little_data():
+    model = SmallTransformer()
+    plain = compress(model, "head_pruning", ratio=0.5)
+    tiny = compress(model, "head_pruning", ratio=0.5, loader=make_loader((6, 16), n=4, batch_size=2))
+    assert all(torch.equal(a, b) for a, b in zip(plain.state_dict().values(), tiny.state_dict().values()))

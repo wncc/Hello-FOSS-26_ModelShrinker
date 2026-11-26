@@ -5,7 +5,9 @@ Paper: Wen et al. 2018, Learning Intrinsic Sparse Structures within LSTM, https:
 A hidden unit owns one row in each gate of every layer and direction, a column of the recurrent
 weights, and the matching inputs of the next layer and of the nn.Linear that reads the RNN. All of
 these are removed together, so the shapes stay consistent. Units are ranked by the L1 norm of their
-weights. nn.LSTM has a single hidden_size, so the same units are kept in every layer.
+weights. nn.LSTM has a single hidden_size, so the same units are kept in every layer. Given a loader,
+the input weights of the later layers and the reading nn.Linear are refit by least squares so they
+reproduce the original model's values on those batches.
 
 An RNN is left unchanged when its output is used in a way this method can't follow, for example
 c_n, an explicit h0, proj_size > 0, torch.cat of the h_n directions, or the RNN being called twice.
@@ -23,6 +25,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
+from shrinker.methods._calibration import calibration_inputs, record, ridge, set_linear
 from shrinker.registry import register
 from shrinker.utils import (
     get_module,
@@ -41,16 +44,21 @@ _ELEMENTWISE_FUNCS = {F.relu, torch.relu, torch.tanh, torch.sigmoid, F.gelu, F.d
 
 
 @register(kind="pruning", paper="https://arxiv.org/abs/1709.05027")
-def apply(model: nn.Module, ratio: Union[float, Dict[str, float]] = 0.3) -> nn.Module:
+def apply(
+    model: nn.Module, ratio: Union[float, Dict[str, float]] = 0.3, loader=None, max_batches: int = 8
+) -> nn.Module:
     """Remove the hidden units with the smallest L1 norm from every nn.LSTM / nn.GRU.
 
-    ratio: one fraction used for every RNN, or {RNN module name: fraction}. RNNs missing
-    from the dict are left unpruned.
+    ratio:       one fraction used for every RNN, or {RNN module name: fraction}. RNNs missing
+                 from the dict are left unpruned.
+    loader:      optional batches used to refit the layers after the pruned units; labels are ignored.
+    max_batches: how many loader batches to use.
     """
     rnns = {name: m for name, m in model.named_modules() if type(m) in _GATES}
     if not rnns:
         return model
     ratios = resolve_module_ratios(rnns, ratio, "nn.LSTM/nn.GRU modules")
+    inputs = calibration_inputs(loader, max_batches)
     try:
         graph = fx.Tracer(autowrap_functions=(pack_padded_sequence, pad_packed_sequence)).trace(model)
     except Exception as e:  # noqa: BLE001  an untraceable model is left unchanged
@@ -71,12 +79,18 @@ def apply(model: nn.Module, ratio: Union[float, Dict[str, float]] = 0.3) -> nn.M
         if len(keep) == rnn.hidden_size:
             continue
 
+        originals = {c: get_module(model, c) for c in consumers}
+        seen = record(model, [rnn, *originals.values()], inputs, outputs=True) if inputs else None
+
         directions = 2 if rnn.bidirectional else 1
         output_cols = torch.cat([keep + d * rnn.hidden_size for d in range(directions)])
         for consumer, reads in consumers.items():
             cols = output_cols if reads == "output" else keep
-            replace_module(model, consumer, slice_linear_in(get_module(model, consumer), cols))
-        replace_module(model, name, _rebuild(rnn, keep))
+            replace_module(model, consumer, slice_linear_in(originals[consumer], cols))
+        smaller = _rebuild(rnn, keep)
+        replace_module(model, name, smaller)
+        if seen:
+            _refit(model, rnn, smaller, keep, originals, seen, inputs)
     return model
 
 
@@ -120,6 +134,49 @@ def _rebuild(rnn: nn.Module, keep: torch.Tensor) -> nn.Module:
     if new.weight_hh_l0.is_cuda:
         new.flatten_parameters()
     return new
+
+
+def _refit(model, old, new, keep, originals, seen, inputs) -> None:
+    G, H = _GATES[type(old)], old.hidden_size
+    rows = torch.cat([keep + g * H for g in range(G)])
+    rnn_inputs = [args[0] for args, _ in seen[old]]
+
+    # Gate pre-activations are linear in weight_ih, so the later layers can be refit exactly.
+    if old.num_layers > 1 and all(isinstance(x, torch.Tensor) for x in rnn_inputs):
+        with torch.no_grad():
+            old_outputs = [_layer_outputs(old, x) for x in rnn_inputs]
+            for layer in range(1, old.num_layers):
+                X = torch.cat([_layer_outputs(new, x)[layer - 1].flatten(0, -2) for x in rnn_inputs])
+                X_old = torch.cat([outs[layer - 1].flatten(0, -2) for outs in old_outputs])
+                for s in (f"_l{layer}", f"_l{layer}_reverse")[: 2 if old.bidirectional else 1]:
+                    w, b = getattr(old, "weight_ih" + s)[rows], getattr(old, "bias_ih" + s)[rows]
+                    fit = ridge(X, X_old @ w.T + b)
+                    if fit is not None:
+                        getattr(new, "weight_ih" + s).copy_(fit[0].to(w))
+                        getattr(new, "bias_ih" + s).copy_(fit[1].to(b))
+
+    current = {c: get_module(model, c) for c in originals}
+    now_seen = record(model, list(current.values()), inputs)
+    for c, linear in current.items():
+        X = torch.cat([args[0].flatten(0, -2) for args in now_seen[linear]])
+        Y = torch.cat([out.flatten(0, -2) for _, out in seen[originals[c]]])
+        set_linear(linear, ridge(X, Y))
+
+
+def _layer_outputs(rnn: nn.Module, x: torch.Tensor):
+    """Output of every layer of a stacked RNN, starting from a zero state."""
+    outputs = []
+    directions = 2 if rnn.bidirectional else 1
+    for layer in range(rnn.num_layers):
+        single = type(rnn)(x.shape[-1], rnn.hidden_size, bias=rnn.bias, batch_first=rnn.batch_first,
+                           bidirectional=rnn.bidirectional, device=x.device, dtype=rnn.weight_hh_l0.dtype)
+        for d in range(directions):
+            src, dst = f"_l{layer}" + ("_reverse" if d else ""), "_l0" + ("_reverse" if d else "")
+            for w in ("weight_ih", "weight_hh", "bias_ih", "bias_hh") if rnn.bias else ("weight_ih", "weight_hh"):
+                getattr(single, w + dst).copy_(getattr(rnn, w + src))
+        x, _ = single(x)
+        outputs.append(x)
+    return outputs
 
 
 def _consumers(graph: fx.Graph, modules: Dict[str, nn.Module], name: str) -> Optional[Dict[str, str]]:

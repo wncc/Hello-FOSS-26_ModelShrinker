@@ -7,6 +7,7 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from examples.test_models import SmallGRU, SmallLSTM
 from shrinker import compress
+from tests.helpers import make_loader
 
 X = torch.randn(3, 6, 16)
 
@@ -155,3 +156,20 @@ def test_frozen_weights_stay_frozen():
     model = SmallLSTM().requires_grad_(False)
     pruned = compress(model, "rnn_hidden_pruning", ratio=0.5)
     assert not any(p.requires_grad for p in pruned.parameters())
+
+
+def test_refit_brings_outputs_closer_to_the_original():
+    model = SmallLSTM().eval()
+    plain = compress(model, "rnn_hidden_pruning", ratio=0.5).eval()
+    refit = compress(model, "rnn_hidden_pruning", ratio=0.5, loader=make_loader((7, 16), n=512, batch_size=64)).eval()
+    x = torch.randn(256, *(7, 16))
+    with torch.no_grad():
+        target = model(x)
+        assert (refit(x) - target).pow(2).mean() < (plain(x) - target).pow(2).mean()
+
+
+def test_refit_is_skipped_with_too_little_data():
+    model = SmallLSTM()
+    plain = compress(model, "rnn_hidden_pruning", ratio=0.5)
+    tiny = compress(model, "rnn_hidden_pruning", ratio=0.5, loader=make_loader((7, 16), n=4, batch_size=2))
+    assert all(torch.equal(a, b) for a, b in zip(plain.state_dict().values(), tiny.state_dict().values()))
