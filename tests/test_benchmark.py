@@ -58,9 +58,13 @@ def test_lstm_flops_hand_computed():
     assert count_flops(lstm, x) == 2 * (5 * 2) * 4 * 4 * (3 + 4)
 
 
-def test_transformer_layer_flops_include_the_feed_forward_block():
+def test_transformer_layer_flops_hand_computed():
     layer = nn.TransformerEncoderLayer(8, 2, dim_feedforward=16, batch_first=True)
-    assert count_flops(layer, torch.randn(1, 3, 8)) == 2 * 3 * (8 * 16 + 16 * 8)
+    tokens, width, ffn = 3, 8, 16
+    projections = 4 * tokens * width * width  # q, k, v and out_proj
+    attention = 2 * tokens * tokens * width
+    feed_forward = 2 * tokens * width * ffn
+    assert count_flops(layer, torch.randn(1, tokens, width)) == 2 * (projections + attention + feed_forward)
 
 
 def test_size_matches_params():

@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterator, Optional
 import torch
 from torch import nn
 
+from .attention import PrunedMultiheadAttention
 from .utils import unfused_transformer_layers
 
 
@@ -102,7 +103,7 @@ def measure_latency(
 
 
 def count_flops(model: nn.Module, example_input: Any) -> Optional[int]:
-    """FLOPs of the Conv2d, Linear and LSTM/GRU layers (float or quantized) for one forward pass.
+    """FLOPs of the Conv2d, Linear, LSTM/GRU and attention layers (float or quantized) for one forward pass.
 
     Returns ``None`` when no such layer ran, so an unmeasured model is not reported as 0 FLOPs.
     """
@@ -131,6 +132,17 @@ def count_flops(model: nn.Module, example_input: Any) -> Optional[int]:
             if out_size != m.hidden_size:
                 total[0] += directions * steps * m.hidden_size * out_size
 
+    def attention_hook(m, args, kwargs, out):
+        counted[0] = True
+        query = args[0] if args else kwargs["query"]
+        key = args[1] if len(args) > 1 else kwargs.get("key", query)
+        B, L = (query.shape[0], query.shape[1]) if m.batch_first else (query.shape[1], query.shape[0])
+        S = key.shape[1] if m.batch_first else key.shape[0]
+        width = m.num_heads * m.head_dim
+        if isinstance(m, nn.MultiheadAttention):  # its projections are not nn.Linear layers
+            total[0] += B * (2 * L + 2 * S) * m.embed_dim * m.embed_dim
+        total[0] += 2 * B * L * S * width  # scores and weighted sum
+
     handles = []
     for m in model.modules():
         if type(m) is nn.Conv2d or _is_quantized(m, "Conv2d"):
@@ -139,6 +151,8 @@ def count_flops(model: nn.Module, example_input: Any) -> Optional[int]:
             handles.append(m.register_forward_hook(linear_hook))
         elif type(m) in (nn.LSTM, nn.GRU):
             handles.append(m.register_forward_hook(rnn_hook))
+        elif type(m) in (nn.MultiheadAttention, PrunedMultiheadAttention):
+            handles.append(m.register_forward_hook(attention_hook, with_kwargs=True))
     try:
         with _eval_on(model, "cpu"), unfused_transformer_layers(_to(example_input, "cpu")) as x:
             _run(model, x)
