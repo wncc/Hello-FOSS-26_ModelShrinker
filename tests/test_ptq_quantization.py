@@ -30,6 +30,19 @@ class _Branchy(nn.Module):
         return torch.zeros(x.shape[0], 2)
 
 
+class _Lstm(nn.Module):
+    """Only the final Linear can be quantized; the LSTM stays FP32."""
+
+    def __init__(self):
+        super().__init__()
+        self.rnn = nn.LSTM(16, 32, num_layers=2, batch_first=True)
+        self.fc = nn.Linear(32, 4)
+
+    def forward(self, x):
+        out, _ = self.rnn(x)
+        return self.fc(out[:, -1])
+
+
 class _DictLoader:
     def __init__(self):
         self.called = False
@@ -78,6 +91,16 @@ def test_ptq_returns_model_unchanged_when_tracing_fails(caplog):
     assert type(small) is _Branchy
     assert type(small.linear) is nn.Linear
     assert "trace and prepare" in caplog.text
+
+
+def test_ptq_returns_model_unchanged_when_most_weights_stay_fp32(caplog):
+    model = _Lstm().eval()
+    x = torch.randn(16, 7, 16)
+    loader = torch.utils.data.DataLoader(x, batch_size=8)
+    with caplog.at_level(logging.INFO, logger="shrinker.methods.ptq_quantization"):
+        result = compress(model, "ptq_quantization", loader=loader, example_input=x[:2])
+    assert not any("quantized" in type(m).__module__ for m in result.modules())
+    assert "would stay FP32" in caplog.text
 
 
 def test_ptq_returns_model_unchanged_for_unusable_batches(caplog):

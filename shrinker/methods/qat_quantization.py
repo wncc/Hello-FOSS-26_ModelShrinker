@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 from typing import Any
 
@@ -12,6 +13,7 @@ from shrinker.methods._quantization_common import (
     _as_args,
     _make_views_layout_safe,
     _quantized_engine,
+    _quantized_weight_share,
     _select_backend,
 )
 from shrinker.registry import register
@@ -87,6 +89,7 @@ def apply(
         logger.info("Skipping QAT quantization: example_input must be a Tensor or tuple of Tensors")
         return model
 
+    original = copy.deepcopy(model)  # training below also updates the weights of ``model``
     selected_backend = _select_backend(backend)
     try:
         from torch.ao.quantization import get_default_qat_qconfig_mapping
@@ -141,6 +144,10 @@ def apply(
     except Exception as exc:  # noqa: BLE001 - leave models unchanged if a backend cannot lower them
         logger.info("Skipping QAT quantization: backend conversion failed: %s", exc)
         return model
+
+    if _quantized_weight_share(result, original) < 0.5:
+        logger.info("Skipping QAT quantization: most weights (e.g. LSTM/GRU, attention) would stay FP32")
+        return original
 
     _make_views_layout_safe(result)
     quantized = sum("quantized" in type(module).__module__ for module in result.modules())

@@ -52,6 +52,21 @@ def test_flops_hand_computed():
     assert count_flops(lin, torch.randn(1, 10)) == 2 * 10 * 5
 
 
+def test_lstm_flops_hand_computed():
+    lstm = nn.LSTM(3, 4)
+    x = torch.randn(5, 2, 3)  # 5 steps, batch of 2
+    assert count_flops(lstm, x) == 2 * (5 * 2) * 4 * 4 * (3 + 4)
+
+
+def test_transformer_layer_flops_hand_computed():
+    layer = nn.TransformerEncoderLayer(8, 2, dim_feedforward=16, batch_first=True)
+    tokens, width, ffn = 3, 8, 16
+    projections = 4 * tokens * width * width  # q, k, v and out_proj
+    attention = 2 * tokens * tokens * width
+    feed_forward = 2 * tokens * width * ffn
+    assert count_flops(layer, torch.randn(1, tokens, width)) == 2 * (projections + attention + feed_forward)
+
+
 def test_size_matches_params():
     model = torch.nn.Linear(1000, 1000)
     assert abs(model_size_mb(model) - count_parameters(model) * 4 / 1e6) < 0.01

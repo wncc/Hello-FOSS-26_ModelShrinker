@@ -4,8 +4,9 @@ A teacher model teaches a smaller student to match its soft probability outputs
 as well as the true labels.
 
 By default, the student is a copy of the teacher with safely prunable layers
-reduced by ``ratio``. If no layer can be pruned safely, the method raises a
-clear error. You can provide your own smaller model with ``student=``.
+reduced by ``ratio``; LSTM/GRU hidden sizes and Transformer attention heads and
+feed-forward layers are reduced too. If nothing can be pruned safely, the method raises a clear
+error. You can provide your own smaller model with ``student=``.
 
 The teacher is not modified. The trained student is returned. Optionally, a
 fraction of the student's weakest weights is zeroed at the end (``sparsity``).
@@ -24,7 +25,7 @@ from torch.utils.data import DataLoader
 
 from shrinker.benchmark import count_parameters
 from shrinker.core import CompressionError
-from shrinker.registry import register
+from shrinker.registry import get_method, register
 from shrinker.utils import (
     get_module,
     keep_indices,
@@ -34,6 +35,8 @@ from shrinker.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+_SEQUENCE_METHODS = ("rnn_hidden_pruning", "head_pruning", "ffn_pruning")
 
 
 def _soft_target_loss(
@@ -100,20 +103,13 @@ def _build_default_student(model: nn.Module, ratio: float) -> nn.Module:
     # Find the safely prunable layers before changing the model.
     names = [name for name, _ in prunable_layers(student)]
 
-    if not names:
-        reasons = _explain_skipped(skipped_layers(student))
-        raise CompressionError(
-            "knowledge_distillation failed: no layer of this model can be "
-            "pruned safely, so a smaller student cannot be built automatically "
-            f"({reasons}). Pass your own smaller model with student=..."
+    if names:
+        logger.info(
+            "knowledge_distillation: pruning %d layer(s) by %.0f%%: %s",
+            len(names),
+            ratio * 100,
+            ", ".join(names),
         )
-
-    logger.info(
-        "knowledge_distillation: pruning %d layer(s) by %.0f%%: %s",
-        len(names),
-        ratio * 100,
-        ", ".join(names),
-    )
 
     # Keep the channels with the largest L1 norm, following l1_pruning.
     for name in names:
@@ -122,7 +118,18 @@ def _build_default_student(model: nn.Module, ratio: float) -> nn.Module:
         scores = layer.weight.detach().abs().flatten(1).sum(dim=1)
         prune_channels(student, name, keep_indices(scores, ratio))
 
+    # RNNs and Transformer layers are opaque to the analysis above, so they have their own methods.
+    for method in _SEQUENCE_METHODS:
+        student = get_method(method).fn(student, ratio=ratio)
+
     if count_parameters(student) >= count_parameters(model):
+        if not names:
+            reasons = _explain_skipped(skipped_layers(student))
+            raise CompressionError(
+                "knowledge_distillation failed: no layer of this model can be "
+                "pruned safely, so a smaller student cannot be built automatically "
+                f"({reasons}). Pass your own smaller model with student=..."
+            )
         raise CompressionError(
             "knowledge_distillation failed: pruning did not make the student "
             f"smaller (layers tried: {', '.join(names)}). "

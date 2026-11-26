@@ -19,6 +19,7 @@ from shrinker.methods._quantization_common import (
     _as_args,
     _make_views_layout_safe,
     _quantized_engine,
+    _quantized_weight_share,
     _select_backend,
 )
 from shrinker.registry import register
@@ -122,6 +123,10 @@ def apply(
             result = convert_fx(prepared.eval())
     except Exception as exc:  # noqa: BLE001 - leave models unchanged if a backend cannot lower them
         logger.info("Skipping static PTQ: backend conversion failed: %s", exc)
+        return model
+
+    if _quantized_weight_share(result, model) < 0.5:
+        logger.info("Skipping static PTQ: most weights (e.g. LSTM/GRU, attention) would stay FP32")
         return model
 
     _make_views_layout_safe(result)

@@ -5,7 +5,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from examples.test_models import SmallMLP, SmallVGG, TEST_MODELS
+from examples.test_models import SmallLSTM, SmallMLP, SmallTransformer, SmallVGG, TEST_MODELS
 from shrinker import CompressionError, compress
 from shrinker.benchmark import count_flops, count_nonzero_parameters, count_parameters, model_size_mb
 from shrinker.methods.knowledge_distillation import _soft_target_loss, _zero_smallest_weights, apply
@@ -136,6 +136,14 @@ def test_student_must_be_a_module():
     loader = _make_loader_for(SmallMLP, (1, 28, 28))
     with pytest.raises(TypeError, match="student must be an nn.Module"):
         compress(SmallMLP(), "knowledge_distillation", loader=loader, student="small_model.pt")
+
+
+def test_default_student_shrinks_rnn_and_transformer_layers():
+    lstm = compress(SmallLSTM(), "knowledge_distillation", loader=make_loader((7, 16)), epochs=1)
+    assert lstm.rnn.hidden_size == 16
+    transformer = compress(SmallTransformer(), "knowledge_distillation", loader=make_loader((6, 16)), epochs=1)
+    assert all(layer.linear1.out_features == 32 for layer in transformer.encoder.layers)
+    assert all(layer.self_attn.num_heads == 2 for layer in transformer.encoder.layers)
 
 
 # --- when no smaller student can be built ------------------------------------------------------

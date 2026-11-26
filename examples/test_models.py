@@ -143,6 +143,46 @@ class SmallTabularMLP(nn.Module):
         return self.net(x)
 
 
+class SmallLSTM(nn.Module):
+    """2-layer LSTM over (batch, time, features); classifies from the last time step."""
+
+    def __init__(self, in_features: int = 16, hidden: int = 32, num_classes: int = 10):
+        super().__init__()
+        self.rnn = nn.LSTM(in_features, hidden, num_layers=2, batch_first=True)
+        self.fc = nn.Linear(hidden, num_classes)
+
+    def forward(self, x):
+        out, _ = self.rnn(x)
+        return self.fc(out[:, -1])
+
+
+class SmallGRU(nn.Module):
+    """Bidirectional GRU, averaged over time."""
+
+    def __init__(self, in_features: int = 16, hidden: int = 24, num_classes: int = 5):
+        super().__init__()
+        self.rnn = nn.GRU(in_features, hidden, batch_first=True, bidirectional=True)
+        self.fc = nn.Linear(2 * hidden, num_classes)
+
+    def forward(self, x):
+        out, _ = self.rnn(x)
+        return self.fc(out.mean(dim=1))
+
+
+class SmallTransformer(nn.Module):
+    """nn.TransformerEncoder (2 layers, 4 heads) over (batch, time, features), mean-pooled."""
+
+    def __init__(self, in_features: int = 16, d_model: int = 32, num_classes: int = 10):
+        super().__init__()
+        self.proj = nn.Linear(in_features, d_model)
+        layer = nn.TransformerEncoderLayer(d_model, nhead=4, dim_feedforward=64, dropout=0.1, batch_first=True)
+        self.encoder = nn.TransformerEncoder(layer, num_layers=2, enable_nested_tensor=False)
+        self.head = nn.Linear(d_model, num_classes)
+
+    def forward(self, x):
+        return self.head(self.encoder(self.proj(x)).mean(dim=1))
+
+
 TEST_MODELS = {
     "SmallMLP": (SmallMLP, (2, 1, 28, 28)),
     "SmallVGG": (SmallVGG, (2, 3, 32, 32)),
@@ -150,4 +190,7 @@ TEST_MODELS = {
     "SmallMobileNet": (SmallMobileNet, (2, 3, 32, 32)),
     "SmallFunctionalCNN": (SmallFunctionalCNN, (1, 3, 24, 40)),  # batch of 1, non-square
     "SmallTabularMLP": (SmallTabularMLP, (4, 20)),
+    "SmallLSTM": (SmallLSTM, (2, 7, 16)),  # (batch, time, features)
+    "SmallGRU": (SmallGRU, (3, 5, 16)),
+    "SmallTransformer": (SmallTransformer, (2, 6, 16)),
 }
