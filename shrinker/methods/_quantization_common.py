@@ -70,3 +70,14 @@ def _make_views_layout_safe(module: nn.Module) -> None:
     if changed:
         graph.lint()
         module.recompile()
+
+
+def _quantized_weight_share(quantized: nn.Module, original: nn.Module) -> float:
+    """Fraction of ``original``'s parameters that ended up in INT8 kernels in ``quantized``."""
+    total = sum(p.numel() for p in original.parameters())
+    converted = sum(
+        m.weight().numel()
+        for m in quantized.modules()
+        if "quantized" in type(m).__module__ and callable(getattr(m, "weight", None))
+    )
+    return converted / total if total else 0.0
